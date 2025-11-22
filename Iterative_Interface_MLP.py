@@ -12,12 +12,6 @@ class PruningInterface:
         self.mlp_importance = None
         self.att_importance = None
         self.mlp_importance_list = None
-        #IMPORTANT INFO ABOUT ARGS: 
-        #SimpleNamespace object
-        #to get importances for all neurons, set prune_frac = 1.0
-        #prune_frac, sparsity_ratio, tol, max_iters,
-        #masks_per_iter, eval_batches, warmup_batches,
-        #perturb_frac, ridge_lambda, mode='importances' (if we dont want to affect the model but rather just get importances)
 
     def fit(self, device, args):
 
@@ -709,21 +703,21 @@ class PruningInterface:
             self.top1_pruned = eval_accuracy(self.nn, self.device, self.dl, max_batches=getattr(args, "eval_batches", 10))
         elif mode == "importances":
             #in case we only need to extract importances, we will also normalize
-            imp_mat = self.copy_metrics.get("importance_original_matrix", None)
-            if imp_mat is not None:
-                max_abs = imp_mat.abs().max()
-                if max_abs > 0:
-                    norm_mat = imp_mat / max_abs
-                    self.copy_metrics["importance_original_matrix"] = norm_mat
+            #imp_mat = self.copy_metrics.get("importance_original_matrix", None)
+            #if imp_mat is not None:
+            #    max_abs = imp_mat.abs().max()
+            #    if max_abs > 0:
+            #        norm_mat = imp_mat / max_abs
+            #        self.copy_metrics["importance_original_matrix"] = norm_mat
 
-                    imp_dict = self.copy_metrics.get("importance_original", {})
-                    if isinstance(imp_dict, dict) and len(imp_dict) > 0:
-                        keys = sorted(imp_dict.keys())  # blocks.0.mlp, blocks.1.mlp, ...
-                        for i, k in enumerate(keys):
-                            v_old = imp_dict[k]
-                            imp_dict[k] = norm_mat[i].view_as(v_old)
-                        self.copy_metrics["importance_original"] = imp_dict
-            #pass
+            #        imp_dict = self.copy_metrics.get("importance_original", {})
+            #        if isinstance(imp_dict, dict) and len(imp_dict) > 0:
+            #            keys = sorted(imp_dict.keys())  # blocks.0.mlp, blocks.1.mlp, ...
+            #            for i, k in enumerate(keys):
+            #                v_old = imp_dict[k]
+            #                imp_dict[k] = norm_mat[i].view_as(v_old)
+            #            self.copy_metrics["importance_original"] = imp_dict
+            pass
         else:
             apply_runtime_gates(self.nn, self.final_masks)
             self.top1_gate = eval_accuracy(self.nn, self.device, self.dl, max_batches=getattr(args, "eval_batches", 10))
@@ -743,7 +737,7 @@ class PruningInterface:
         }
 
 
-    def compute_importances(self, device, args):
+    def compute_importances_old(self, device, args):
 
         import copy
         args_loc = copy.deepcopy(args)
@@ -769,3 +763,40 @@ class PruningInterface:
         return mlp_importance
 
 
+    def compute_importances(self, device, args):
+
+        import copy
+        import torch
+        args_loc = copy.deepcopy(args)
+        args_loc.mode = "importances"
+        results = self.fit(device, args_loc)
+        imp_dict = results.get("importance_original", {})
+        if (not isinstance(imp_dict, dict)) or len(imp_dict) == 0:
+            self.mlp_importance = None
+            return None
+        ffn_importances = {}
+
+        if hasattr(self.nn, "blocks"):
+            num_blocks = len(self.nn.blocks)
+        else:
+            num_blocks = 0
+
+        i = 0
+        while i < num_blocks:
+            layer_name = f"blocks.{i}.mlp"
+            if layer_name in imp_dict:
+                tens = imp_dict[layer_name]
+                flat = tens.view(-1).detach().cpu().tolist()
+
+                j = 0
+                while j < len(flat):
+                    key_ij = f"{i}:{j}"
+                    ffn_importances[key_ij] = float(flat[j])
+                    j = j + 1
+
+            i = i + 1
+
+        json_out = {"ffn": ffn_importances}
+        self.mlp_importance = json_out
+
+        return json_out
