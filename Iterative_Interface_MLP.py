@@ -96,8 +96,6 @@ class PruningInterface:
             attach_vit_mlp_caches_only(model)
 
 
-
-
         def compute_mlp_importance_linear(args_loc, model, loader, prior_by_name, module_map):
             import torch, numpy as np
             device_local = next(model.parameters()).device
@@ -171,7 +169,7 @@ class PruningInterface:
                 half = 1
 
             it = 0
-            while it < half:    #why it < half?
+            while it < half:
                 #mask m
                 for name, mod in module_map.items():
                     _p, fixed_idx, use_idx = prior_by_name[name]
@@ -253,7 +251,6 @@ class PruningInterface:
                 importance_scores[name] = imp.view(1, 1, -1).detach().cpu()
 
             return importance_scores
-
 
 
 
@@ -397,10 +394,6 @@ class PruningInterface:
 
             return mask_dict, importance_scores
 
-
-
-
-
         try:
             from transformers.pytorch_utils import prune_linear_layer
         except Exception:
@@ -438,7 +431,7 @@ class PruningInterface:
             gc.collect(); torch.cuda.empty_cache()
         #---
 
-
+        #now we use a model copy to remove neurons and see best masks without actually damaging the model
         def final_mlp_masks_from_pruned_copy(model, loader, args_loc, target=None, tol=0.01, max_iters=8,
                                              report_eval=True, eval_batches=10):
             device_local = next(model.parameters()).device
@@ -586,18 +579,6 @@ class PruningInterface:
             #print(f"Zeroed applied to {applied}  MLP layers")
             return applied, missing
         #---
-        def remove_runtime_gates(model):
-            removed = 0
-            for _, mod in model.named_modules():
-                if hasattr(mod, 'fc1') and hasattr(mod.fc1, "_gate_handle") and mod.fc1._gate_handle is not None:
-                    try:
-                        mod.fc1._gate_handle.remove()
-                        removed += 1
-                    except Exception:
-                        pass
-                    mod.fc1._gate_handle = None
-            #print(f"Zeroes removed {removed} from MLP Layer")
-
 
 
         import torch
@@ -701,23 +682,6 @@ class PruningInterface:
         elif mode == "pruning":
             prune_model_mlp_only(self.final_masks, self.nn)
             self.top1_pruned = eval_accuracy(self.nn, self.device, self.dl, max_batches=getattr(args, "eval_batches", 10))
-        elif mode == "importances":
-            #in case we only need to extract importances, we will also normalize
-            #imp_mat = self.copy_metrics.get("importance_original_matrix", None)
-            #if imp_mat is not None:
-            #    max_abs = imp_mat.abs().max()
-            #    if max_abs > 0:
-            #        norm_mat = imp_mat / max_abs
-            #        self.copy_metrics["importance_original_matrix"] = norm_mat
-
-            #        imp_dict = self.copy_metrics.get("importance_original", {})
-            #        if isinstance(imp_dict, dict) and len(imp_dict) > 0:
-            #            keys = sorted(imp_dict.keys())  # blocks.0.mlp, blocks.1.mlp, ...
-            #            for i, k in enumerate(keys):
-            #                v_old = imp_dict[k]
-            #                imp_dict[k] = norm_mat[i].view_as(v_old)
-            #            self.copy_metrics["importance_original"] = imp_dict
-            pass
         else:
             apply_runtime_gates(self.nn, self.final_masks)
             self.top1_gate = eval_accuracy(self.nn, self.device, self.dl, max_batches=getattr(args, "eval_batches", 10))
@@ -735,33 +699,6 @@ class PruningInterface:
             "importance_original": self.copy_metrics.get("importance_original", {}),
             "importance_original_matrix": self.copy_metrics.get("importance_original_matrix", None),
         }
-
-
-    def compute_importances_old(self, device, args):
-
-        import copy
-        args_loc = copy.deepcopy(args)
-        args_loc.mode = "importances"
-        results = self.fit(device, args_loc)
-
-        imp_dict = results.get("importance_original", {})
-        imp_list = []
-        num_blocks = len(self.nn.blocks)
-
-        imp_mat = results.get("importance_original_matrix", None)
-
-        if imp_mat is None:
-            self.mlp_importance = None
-            return None
-
-        mlp_importance = []
-        for row in imp_mat:
-            mlp_importance.append(row.detach())
-
-        self.mlp_importance = mlp_importance
-
-        return mlp_importance
-
 
     def compute_importances(self, device, args):
 
